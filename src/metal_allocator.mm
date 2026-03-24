@@ -1,0 +1,133 @@
+#import <Metal/Metal.h>
+#import <Foundation/Foundation.h>
+
+#include <rais/metal_allocator.hpp>
+
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <mutex>
+#include <vector>
+
+namespace rais {
+
+// Size classes: 4KB, 64KB, 1MB, 16MB, 256MB
+static constexpr size_t kNumSizeClasses = 5;
+static constexpr size_t kSizeClasses[kNumSizeClasses] = {
+    4ULL * 1024,          //   4 KB
+    64ULL * 1024,         //  64 KB
+    1ULL * 1024 * 1024,   //   1 MB
+    16ULL * 1024 * 1024,  //  16 MB
+    256ULL * 1024 * 1024, // 256 MB
+};
+
+/// Map a byte size to the smallest size class that fits it.
+/// Returns kNumSizeClasses if the request exceeds the largest class.
+static size_t size_class_index(size_t bytes) {
+    for (size_t i = 0; i < kNumSizeClasses; ++i) {
+        if (bytes <= kSizeClasses[i]) return i;
+    }
+    return kNumSizeClasses; // too large
+}
+
+struct MetalBufferPool::Impl {
+    id<MTLDevice> device;
+
+    // Per-size-class free list
+    struct Bucket {
+        std::mutex mutex;
+        std::vector<id<MTLBuffer>> buffers;
+    };
+    std::array<Bucket, kNumSizeClasses> buckets;
+
+    std::atomic<size_t> live_count{0};
+};
+
+MetalBufferPool::MetalBufferPool(void* device)
+    : impl_(std::make_unique<Impl>()) {
+
+    impl_->device = (__bridge id<MTLDevice>)device;
+    assert(impl_->device && "MetalBufferPool: nil MTLDevice");
+}
+
+MetalBufferPool::~MetalBufferPool() {
+    // Release all pooled buffers. In-use buffers are the caller's
+    // responsibility.
+}
+
+void* MetalBufferPool::acquire(size_t bytes) {
+    size_t idx = size_class_index(bytes);
+    if (idx >= kNumSizeClasses) {
+        // Request exceeds largest size class — allocate directly
+        id<MTLBuffer> buf = [impl_->device
+            newBufferWithLength:bytes
+            options:MTLResourceStorageModeShared];
+        if (!buf) return nullptr;
+        impl_->live_count.fetch_add(1, std::memory_order_relaxed);
+        return (__bridge void*)buf;
+    }
+
+    size_t alloc_size = kSizeClasses[idx];
+
+    // Try to pop from the free list
+    {
+        auto& bucket = impl_->buckets[idx];
+        std::lock_guard lock(bucket.mutex);
+        if (!bucket.buffers.empty()) {
+            id<MTLBuffer> buf = bucket.buffers.back();
+            bucket.buffers.pop_back();
+            impl_->live_count.fetch_add(1, std::memory_order_relaxed);
+            return (__bridge void*)buf;
+        }
+    }
+
+    // Allocate a new buffer
+    id<MTLBuffer> buf = [impl_->device
+        newBufferWithLength:alloc_size
+        options:MTLResourceStorageModeShared];
+    if (!buf) return nullptr;
+
+    // Runtime assert: on Apple Silicon, Managed mode is pointless.
+    // We always use Shared. Verify the buffer got Shared mode.
+    assert(buf.storageMode == MTLStorageModeShared &&
+           "MetalBufferPool: expected MTLStorageModeShared");
+
+    impl_->live_count.fetch_add(1, std::memory_order_relaxed);
+    return (__bridge void*)buf;
+}
+
+void MetalBufferPool::release(void* buffer) {
+    assert(buffer && "MetalBufferPool::release: null buffer");
+    id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer;
+
+    size_t len = buf.length;
+    size_t idx = size_class_index(len);
+
+    impl_->live_count.fetch_sub(1, std::memory_order_relaxed);
+
+    if (idx >= kNumSizeClasses) {
+        // Oversized buffer — not pooled, caller is done with it
+        return;
+    }
+
+    // Return to the appropriate bucket (no deallocation, no zeroing)
+    auto& bucket = impl_->buckets[idx];
+    std::lock_guard lock(bucket.mutex);
+    bucket.buffers.push_back(buf);
+}
+
+size_t MetalBufferPool::pool_size() const {
+    size_t total = 0;
+    for (size_t i = 0; i < kNumSizeClasses; ++i) {
+        auto& bucket = impl_->buckets[i];
+        std::lock_guard lock(bucket.mutex);
+        total += bucket.buffers.size();
+    }
+    return total;
+}
+
+size_t MetalBufferPool::live_buffers() const {
+    return impl_->live_count.load(std::memory_order_acquire);
+}
+
+} // namespace rais

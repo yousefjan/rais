@@ -27,16 +27,20 @@ concurrent local AI workloads on a single developer machine.
        └──────┼──────┘ └──────┼──────┘ └──────┼──────┘
               │               │               │
               └───── steal ───┴───── steal ────┘
+
+                             │ GPU lane
+                             ▼
+                 ┌───────────────────────┐
+                 │   Metal Executor      │
+                 │  (command queue +     │
+                 │   pipeline cache)     │
+                 └───────────┬───────────┘
+                             │
+                 ┌───────────┴───────────┐
+                 │  MetalBufferPool      │
+                 │  (size-class buckets) │
+                 └───────────────────────┘
 ```
-
-## Results
-
-| Date       | Build   | Test               | Metric     | Value     | Units   | Notes       |
-|------------|---------|--------------------|------------|-----------|---------|-------------|
-| 2026-03-23 | release | queue_mpmc_4p4c    | throughput | 5,874,574 | ops/sec | with padding|
-| 2026-03-23 | release | queue_mpmc_4p4c    | throughput | 3,141,639 | ops/sec | no padding  |
-
-Cache-line padding on the MPMC queue indices delivers ~87% higher throughput by eliminating false sharing between producer and consumer cores.
 
 ## Design Decisions
 
@@ -51,4 +55,17 @@ The producer index (`tail_`) and consumer index (`head_`) are accessed by disjoi
 
 ### Separate padded and unpadded queue variants
 The unpadded variant (`MPMCQueueUnpadded`) exists solely to measure the false-sharing penalty. It is not intended for production use.
+
+### Lock-free slab allocator with tagged pointers
+`SlabAllocator<T, N>` is a fixed-capacity object pool backed by a contiguous array and a lock-free 
+free list. The free list head is a 64-bit tagged pointer (16-bit generation counter + 
+48-bit address) to prevent ABA. Each slot's `next` pointer is `std::atomic` so that the speculative
+read in `allocate()` is data-race-free even when another thread is concurrently calling `free()`. 
+The slab is O(1) alloc/free and thread-safe.
+
+### Bump-pointer arena for per-worker scratch
+`ArenaAllocator` is a simple bump-pointer allocator for per-worker temporary data. It is not thread-safe by design — each worker owns its own arena. Bulk `reset()` reclaims all memory in O(1) without per-object destructors.
+
+### MetalBufferPool with size-class bucketing
+GPU buffer allocation through `[MTLDevice newBufferWithLength:]` is expensive relative to a pool hit. `MetalBufferPool` maintains per-size-class free lists (4KB, 64KB, 1MB, 16MB, 256MB) behind per-bucket mutexes. All buffers are `MTLStorageModeShared` — on Apple Silicon's unified memory, Managed mode adds overhead with no benefit. The pool tracks `live_buffers()` for leak detection.
 

@@ -21,7 +21,7 @@ endif()
 # Library target
 set(RAIS_SOURCES src/scheduler.cpp)
 if(RAIS_HAS_METAL)
-    list(APPEND RAIS_SOURCES src/metal_executor.mm)
+    list(APPEND RAIS_SOURCES src/metal_executor.mm src/metal_allocator.mm)
 endif()
 add_library(rais STATIC ${RAIS_SOURCES})
 target_include_directories(rais PUBLIC ${CMAKE_SOURCE_DIR}/include)
@@ -81,6 +81,13 @@ add_test(NAME test_scheduler COMMAND test_scheduler)
 add_executable(bench_scheduler benchmarks/bench_scheduler.cpp)
 target_link_libraries(bench_scheduler PRIVATE rais)
 
+add_executable(test_allocator tests/test_allocator.cpp)
+target_link_libraries(test_allocator PRIVATE rais Catch2::Catch2WithMain)
+add_test(NAME test_allocator COMMAND test_allocator)
+
+add_executable(bench_allocator benchmarks/bench_allocator.cpp)
+target_link_libraries(bench_allocator PRIVATE rais)
+
 # Metal-specific targets (guarded by platform)
 if(RAIS_HAS_METAL)
     add_executable(test_metal_executor tests/test_metal_executor.mm)
@@ -95,4 +102,8 @@ if(RAIS_HAS_METAL)
     target_compile_definitions(bench_metal PRIVATE
         RAIS_METALLIB_PATH="${METAL_LIB}")
     add_dependencies(bench_metal metal_shaders)
+
+    add_executable(test_metal_allocator tests/test_metal_allocator.mm)
+    target_link_libraries(test_metal_allocator PRIVATE rais Catch2::Catch2WithMain)
+    add_test(NAME test_metal_allocator COMMAND test_metal_allocator)
 endif()

@@ -16,3 +16,9 @@ date	build_config	test_name	metric	value	units	notes
 2026-03-24	release	metal_add_1M	latency_p50	399042	ns	1M-element add
 2026-03-24	release	metal_add_1M	latency_p95	503125	ns	1M-element add
 2026-03-24	release	metal_add_1M	latency_p99	585500	ns	1M-element add
+2026-03-24	debug	slab_alloc	P50_latency	83	ns	single-thread
+2026-03-24	debug	slab_alloc	P95_latency	84	ns	single-thread
+2026-03-24	debug	slab_alloc	P99_latency	125	ns	single-thread
+2026-03-24	debug	slab_free	P50_latency	83	ns	single-thread
+2026-03-24	debug	slab_concurrent_8t	throughput	3801933	ops/sec	alloc+free pairs
+2026-03-24	debug	arena_alloc	throughput	124129440	ops/sec	64-byte allocs + reset
