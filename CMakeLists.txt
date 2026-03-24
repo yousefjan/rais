@@ -19,8 +19,16 @@ else()
 endif()
 
 # Library target
-add_library(rais STATIC src/scheduler.cpp)
+set(RAIS_SOURCES src/scheduler.cpp)
+if(RAIS_HAS_METAL)
+    list(APPEND RAIS_SOURCES src/metal_executor.mm)
+endif()
+add_library(rais STATIC ${RAIS_SOURCES})
 target_include_directories(rais PUBLIC ${CMAKE_SOURCE_DIR}/include)
+if(RAIS_HAS_METAL)
+    target_link_libraries(rais PUBLIC "-framework Metal" "-framework Foundation" "-framework QuartzCore")
+    add_dependencies(rais metal_shaders)
+endif()
 
 # Metal shader compilation: .metal → .air → .metallib
 if(RAIS_HAS_METAL)
@@ -72,3 +80,19 @@ add_test(NAME test_scheduler COMMAND test_scheduler)
 
 add_executable(bench_scheduler benchmarks/bench_scheduler.cpp)
 target_link_libraries(bench_scheduler PRIVATE rais)
+
+# Metal-specific targets (guarded by platform)
+if(RAIS_HAS_METAL)
+    add_executable(test_metal_executor tests/test_metal_executor.mm)
+    target_link_libraries(test_metal_executor PRIVATE rais Catch2::Catch2WithMain)
+    target_compile_definitions(test_metal_executor PRIVATE
+        RAIS_METALLIB_PATH="${METAL_LIB}")
+    add_dependencies(test_metal_executor metal_shaders)
+    add_test(NAME test_metal_executor COMMAND test_metal_executor)
+
+    add_executable(bench_metal benchmarks/bench_metal.mm)
+    target_link_libraries(bench_metal PRIVATE rais)
+    target_compile_definitions(bench_metal PRIVATE
+        RAIS_METALLIB_PATH="${METAL_LIB}")
+    add_dependencies(bench_metal metal_shaders)
+endif()
