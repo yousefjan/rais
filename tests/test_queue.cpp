@@ -2,6 +2,12 @@
 
 #include <rais/queue.hpp>
 
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <thread>
+#include <vector>
+
 TEST_CASE("SPSC correctness — produce N then consume N preserves order", "[queue]") {
     constexpr size_t N = 1024;
     rais::MPMCQueue<uint64_t> q(N);

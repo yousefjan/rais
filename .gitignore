@@ -24,3 +24,10 @@ compile_commands.json
 
 # Catch2 generated
 *.xml
+
+# Metal intermediate artifacts
+*.air
+*.metallib
+
+# Profiler trace output
+rais_trace.bin

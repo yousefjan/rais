@@ -1,7 +1,7 @@
 # RAIS
 
-RAIS (رئيس) is a userspace C++20 task scheduler built for concurrent local AI workloads on a 
-single developer machine. .
+RAIS (Runtime for AI Scheduling; رئيس) is a userspace C++20 task scheduler built for
+concurrent local AI workloads on a single developer machine.
 
 ## Architecture
 
