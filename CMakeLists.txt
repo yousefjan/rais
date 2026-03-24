@@ -55,6 +55,13 @@ add_executable(test_queue tests/test_queue.cpp)
 target_link_libraries(test_queue PRIVATE rais Catch2::Catch2WithMain)
 add_test(NAME test_queue COMMAND test_queue)
 
+add_executable(test_deque tests/test_deque.cpp)
+target_link_libraries(test_deque PRIVATE rais Catch2::Catch2WithMain)
+add_test(NAME test_deque COMMAND test_deque)
+
 # Benchmarks
 add_executable(bench_queue benchmarks/bench_queue.cpp)
 target_link_libraries(bench_queue PRIVATE rais)
+
+add_executable(bench_deque benchmarks/bench_deque.cpp)
+target_link_libraries(bench_deque PRIVATE rais)

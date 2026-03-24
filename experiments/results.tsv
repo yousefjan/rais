@@ -1,3 +1,12 @@
 date	build_config	test_name	metric	value	units	notes
 2026-03-23	release	queue_mpmc_4p4c	throughput	5874574	ops/sec	with padding
 2026-03-23	release	queue_mpmc_4p4c	throughput	3141639	ops/sec	no padding
+2026-03-24	release	deque_steal_4t	latency_p50	125	ns	4 thieves
+2026-03-24	release	deque_steal_4t	latency_p95	292	ns	4 thieves
+2026-03-24	release	deque_steal_4t	latency_p99	416	ns	4 thieves
+2026-03-24	release	deque_steal_8t	latency_p50	167	ns	8 thieves
+2026-03-24	release	deque_steal_8t	latency_p95	417	ns	8 thieves
+2026-03-24	release	deque_steal_8t	latency_p99	542	ns	8 thieves
+2026-03-24	release	deque_steal_16t	latency_p50	292	ns	16 thieves
+2026-03-24	release	deque_steal_16t	latency_p95	500	ns	16 thieves
+2026-03-24	release	deque_steal_16t	latency_p99	625	ns	16 thieves
