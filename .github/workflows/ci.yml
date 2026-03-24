@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake catch2 libcatch2-dev
+
+      - name: Configure (Debug + ASan + UBSan)
+        run: cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build (ASan + UBSan)
+        run: cmake --build build-asan
+
+      - name: Test (ASan + UBSan)
+        run: cd build-asan && ctest --output-on-failure
+
+      - name: Configure (Debug + TSan)
+        run: cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=thread"
+
+      - name: Build (TSan)
+        run: cmake --build build-tsan
+
+      - name: Test (TSan)
+        run: cd build-tsan && ctest --output-on-failure
+
+      - name: Configure (Release)
+        run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: cmake --build build-release
+
+      - name: Benchmarks
+        run: cd build-release && ./bench_queue

@@ -1,0 +1,3 @@
+date	build_config	test_name	metric	value	units	notes
+2026-03-23	release	queue_mpmc_4p4c	throughput	5874574	ops/sec	with padding
+2026-03-23	release	queue_mpmc_4p4c	throughput	3141639	ops/sec	no padding
