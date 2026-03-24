@@ -18,9 +18,9 @@ else()
     set(RAIS_HAS_METAL OFF)
 endif()
 
-# Library target — starts INTERFACE (header-only), transitions to STATIC once src/ has files
-add_library(rais INTERFACE)
-target_include_directories(rais INTERFACE ${CMAKE_SOURCE_DIR}/include)
+# Library target
+add_library(rais STATIC src/scheduler.cpp)
+target_include_directories(rais PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 # Metal shader compilation: .metal → .air → .metallib
 if(RAIS_HAS_METAL)
@@ -65,3 +65,10 @@ target_link_libraries(bench_queue PRIVATE rais)
 
 add_executable(bench_deque benchmarks/bench_deque.cpp)
 target_link_libraries(bench_deque PRIVATE rais)
+
+add_executable(test_scheduler tests/test_scheduler.cpp)
+target_link_libraries(test_scheduler PRIVATE rais Catch2::Catch2WithMain)
+add_test(NAME test_scheduler COMMAND test_scheduler)
+
+add_executable(bench_scheduler benchmarks/bench_scheduler.cpp)
+target_link_libraries(bench_scheduler PRIVATE rais)

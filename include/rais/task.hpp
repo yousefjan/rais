@@ -18,7 +18,7 @@ enum class Lane : uint8_t {
 inline constexpr uint64_t kBackgroundPromotionNs = 100'000'000ULL; // 100ms
 inline constexpr uint64_t kBulkPromotionNs       = 500'000'000ULL; // 500ms
 
-struct alignas(64) Task {
+struct Task {
     std::function<void()>        fn;
     std::function<void(void*)>   gpu_fn;         // non-null only for GPU lane;
                                                   // argument is id<MTLCommandBuffer>
@@ -27,6 +27,13 @@ struct alignas(64) Task {
     uint64_t                     deadline_ns     = 0;  // 0 = no deadline
     std::atomic<bool>            cancelled{false};
     std::atomic<bool>            completed{false};
+
+    // The scheduler stores a raw Task* in the lock-free queue (which requires
+    // trivially copyable types). This self-reference keeps the Task alive
+    // while it is in-flight. The worker resets it after marking the task
+    // complete, breaking the ref cycle and allowing destruction if the
+    // caller also dropped the TaskHandle.
+    std::shared_ptr<Task>        self_ref;
 };
 
 /// Caller-facing handle to a submitted task.

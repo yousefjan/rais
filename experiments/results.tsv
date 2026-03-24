@@ -10,3 +10,6 @@ date	build_config	test_name	metric	value	units	notes
 2026-03-24	release	deque_steal_16t	latency_p50	292	ns	16 thieves
 2026-03-24	release	deque_steal_16t	latency_p95	500	ns	16 thieves
 2026-03-24	release	deque_steal_16t	latency_p99	625	ns	16 thieves
+2026-03-24	release	scheduler_interactive_10k	latency_p50	228208	ns	4 workers
+2026-03-24	release	scheduler_interactive_10k	latency_p95	340750	ns	4 workers
+2026-03-24	release	scheduler_interactive_10k	latency_p99	350791	ns	4 workers
