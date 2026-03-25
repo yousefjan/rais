@@ -95,6 +95,78 @@ TaskHandle Scheduler::submit(std::function<void()> fn, Lane lane,
     return TaskHandle(std::move(task));
 }
 
+void Scheduler::enqueue_task(Task* raw) {
+    while (!global_queue_.push(raw)) {
+        std::this_thread::yield();
+    }
+}
+
+TaskHandle Scheduler::submit_after(std::function<void()> fn, Lane lane,
+                                   std::vector<TaskHandle> deps) {
+    auto task = alloc_task();
+    task->fn = std::move(fn);
+    task->lane = lane;
+    task->enqueue_time_ns = clock_ns();
+
+    lane_counts_[static_cast<int>(lane)].fetch_add(1, std::memory_order_relaxed);
+
+    Task* raw = task.get();
+    task->self_ref = task;
+
+    if (deps.empty()) {
+        // No dependencies — behaves identically to submit()
+        enqueue_task(raw);
+        return TaskHandle(std::move(task));
+    }
+
+    // Set pending dep count before registering with predecessors.
+    // acq_rel not needed here — store is sequenced before the loop below
+    // and predecessors synchronize via their own completed.store(release).
+    task->pending_deps.store(static_cast<int32_t>(deps.size()),
+                             std::memory_order_relaxed);
+
+    int32_t already_done = 0;
+    for (auto& dep : deps) {
+        Task* pred = dep.get();
+        if (!pred) {
+            // Null handle — treat as already completed
+            ++already_done;
+            continue;
+        }
+
+        // Register as a dependent. This is safe because we own the only
+        // reference path to `raw` at this point — no worker can see it yet.
+        // The predecessor's dependents vector is written during setup here
+        // and read during completion, ordered by completed.store(release).
+        //
+        // Race: the predecessor may have already completed. We check after
+        // registering. If it completed before we registered, its completion
+        // path won't see us, so we account for it with already_done.
+        pred->dependents.push_back(raw);
+
+        // fence: acquire pairs with predecessor's completed.store(release)
+        if (pred->completed.load(std::memory_order_acquire)) {
+            ++already_done;
+        }
+    }
+
+    // Subtract deps that were already complete. If all were done, enqueue now.
+    if (already_done > 0) {
+        int32_t prev = task->pending_deps.fetch_sub(already_done,
+                                                     std::memory_order_acq_rel);
+        if (prev == already_done) {
+            // All deps already done — enqueue immediately
+            enqueue_task(raw);
+        }
+    }
+
+    return TaskHandle(std::move(task));
+}
+
+TaskHandle Scheduler::then(TaskHandle dep, std::function<void()> fn, Lane lane) {
+    return submit_after(std::move(fn), lane, {std::move(dep)});
+}
+
 TaskHandle Scheduler::submit_gpu(std::function<void(void*, void*)> gpu_fn) {
     assert(gpu_executor_ && "submit_gpu requires a MetalExecutor in SchedulerConfig");
 
@@ -128,7 +200,7 @@ void Scheduler::shutdown(ShutdownPolicy policy) {
         // during this wait, draining queues and dispatching GPU work.
         for (;;) {
             int32_t total = 0;
-            for (int i = 0; i < 4; ++i) {
+            for (int i = 0; i < 5; ++i) {
                 total += lane_counts_[i].load(std::memory_order_acquire);
             }
             if (total == 0) break;
@@ -160,6 +232,38 @@ Task* Scheduler::pop_deadline_task() {
     Task* t = deadline_heap_.back();
     deadline_heap_.pop_back();
     return t;
+}
+
+void Scheduler::activate_dependents(Task* task,
+                                    WorkStealingDeque<Task*>& local_deque) {
+    for (Task* dep : task->dependents) {
+        if (task->cancelled.load(std::memory_order_acquire)) {
+            // Cascading cancellation: mark dependent as cancelled+completed
+            // so its own dependents and waiters unblock.
+            dep->cancelled.store(true, std::memory_order_relaxed);
+        }
+
+        // acq_rel: acquire sees predecessor's writes; release publishes
+        // the decrement so the dependent's fn (or next decrementer) sees
+        // all predecessor side-effects.
+        int32_t prev = dep->pending_deps.fetch_sub(1, std::memory_order_acq_rel);
+        if (prev == 1) {
+            // We were the last predecessor — this dependent is now runnable.
+            if (dep->cancelled.load(std::memory_order_acquire)) {
+                // Already cancelled (either directly or cascading). Complete it
+                // without running fn, then propagate to its own dependents.
+                lane_counts_[static_cast<int>(dep->lane)].fetch_sub(1,
+                    std::memory_order_relaxed);
+                dep->completed.store(true, std::memory_order_release);
+                activate_dependents(dep, local_deque);
+                dep->self_ref.reset();
+            } else {
+                // Push to the completing worker's local deque for cache locality:
+                // the dependent's input data is likely still hot in this core.
+                local_deque.push(dep);
+            }
+        }
+    }
 }
 
 void Scheduler::worker_loop(size_t worker_id) {
@@ -207,11 +311,13 @@ void Scheduler::worker_loop(size_t worker_id) {
         // Found work — reset backoff
         backoff_us = 0;
 
-        // Handle cancelled tasks
+        // Handle cancelled tasks — still activate dependents so the DAG
+        // propagates cancellation and waiters unblock.
         if (task->cancelled.load(std::memory_order_acquire)) {
             lane_counts_[static_cast<int>(task->lane)].fetch_sub(1,
                 std::memory_order_relaxed);
             task->completed.store(true, std::memory_order_release);
+            activate_dependents(task, self.deque);
             task->self_ref.reset(); // break ref cycle
             continue;
         }
@@ -224,10 +330,18 @@ void Scheduler::worker_loop(size_t worker_id) {
                 bool ok = gpu_executor_->submit(
                     task->gpu_fn,
                     [this, ref]() {
-                        // Called on Metal's completion thread
+                        // Called on Metal's completion thread — no local deque
+                        // available, so dependents go to the global queue.
                         lane_counts_[static_cast<int>(Lane::GPU)].fetch_sub(1,
                             std::memory_order_relaxed);
                         ref->completed.store(true, std::memory_order_release);
+                        for (Task* dep : ref->dependents) {
+                            int32_t prev = dep->pending_deps.fetch_sub(1,
+                                std::memory_order_acq_rel);
+                            if (prev == 1) {
+                                enqueue_task(dep);
+                            }
+                        }
                         ref->self_ref.reset();
                     });
                 if (!ok) {
@@ -241,6 +355,7 @@ void Scheduler::worker_loop(size_t worker_id) {
                 lane_counts_[static_cast<int>(Lane::GPU)].fetch_sub(1,
                     std::memory_order_relaxed);
                 task->completed.store(true, std::memory_order_release);
+                activate_dependents(task, self.deque);
                 task->self_ref.reset();
             }
             continue;
@@ -276,6 +391,7 @@ void Scheduler::worker_loop(size_t worker_id) {
         lane_counts_[static_cast<int>(task->lane)].fetch_sub(1,
             std::memory_order_relaxed);
         task->completed.store(true, std::memory_order_release);
+        activate_dependents(task, self.deque);
         task->self_ref.reset(); // break ref cycle
     }
 }

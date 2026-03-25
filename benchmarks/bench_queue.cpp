@@ -2,15 +2,9 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <ctime>
-#include <fstream>
-#include <iomanip>
 #include <iostream>
-#include <sstream>
-#include <string>
-#include <thread>
 #include <vector>
 
 static std::string today() {
@@ -70,8 +64,7 @@ static void append_results(const std::vector<BenchResult>& results) {
     }
 }
 
-/// Run MPMC throughput benchmark with given producer/consumer counts.
-/// Returns total ops/sec.
+// Returns total ops/sec.
 template <typename QueueType>
 static double bench_mpmc(QueueType& q, size_t num_producers, size_t num_consumers,
                          size_t items_per_producer) {

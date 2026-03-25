@@ -47,6 +47,18 @@ public:
     /// from MetalExecutor. Requires gpu_executor in SchedulerConfig.
     TaskHandle submit_gpu(std::function<void(void*, void*)> gpu_fn);
 
+    /// Submit a task that depends on other tasks completing first.
+    /// The task becomes runnable when all deps have completed.
+    /// enqueue_time_ns is set at creation time (not activation time) so
+    /// starvation promotion reflects true wait time.
+    TaskHandle submit_after(std::function<void()> fn, Lane lane,
+                            std::vector<TaskHandle> deps);
+
+    /// Convenience: single-predecessor continuation chain.
+    /// Equivalent to submit_after(fn, lane, {dep}).
+    TaskHandle then(TaskHandle dep, std::function<void()> fn,
+                    Lane lane = Lane::Background);
+
     /// Shut down the scheduler. Drain finishes all pending tasks;
     /// Cancel marks pending tasks as cancelled and stops immediately.
     void shutdown(ShutdownPolicy policy = ShutdownPolicy::Drain);
@@ -73,6 +85,8 @@ private:
     void check_starvation_promotions(Task* task);
     std::shared_ptr<Task> alloc_task();
     Task* pop_deadline_task();
+    void activate_dependents(Task* task, WorkStealingDeque<Task*>& local_deque);
+    void enqueue_task(Task* raw);
 
     static constexpr size_t kTaskSlabCapacity = 8192;
 
@@ -91,7 +105,8 @@ private:
     std::vector<Task*> deadline_heap_;
 
     // Per-lane admission counters. Indexed by static_cast<int>(Lane).
-    alignas(64) std::atomic<int32_t> lane_counts_[4] = {};
+    // 5 slots: Interactive(0), Background(1), Bulk(2), GPU(3), IO(4).
+    alignas(64) std::atomic<int32_t> lane_counts_[5] = {};
 
     std::atomic<bool> stop_flag_{false};
     std::atomic<bool> shutdown_called_{false};

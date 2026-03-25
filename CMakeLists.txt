@@ -64,6 +64,10 @@ add_executable(test_allocator tests/test_allocator.cpp)
 target_link_libraries(test_allocator PRIVATE rais Catch2::Catch2WithMain)
 add_test(NAME test_allocator COMMAND test_allocator)
 
+add_executable(test_continuations tests/test_continuations.cpp)
+target_link_libraries(test_continuations PRIVATE rais Catch2::Catch2WithMain)
+add_test(NAME test_continuations COMMAND test_continuations)
+
 add_executable(test_metal_executor tests/test_metal_executor.mm)
 target_link_libraries(test_metal_executor PRIVATE rais Catch2::Catch2WithMain)
 target_compile_definitions(test_metal_executor PRIVATE

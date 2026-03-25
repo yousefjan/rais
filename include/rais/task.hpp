@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <thread>
+#include <vector>
 
 namespace rais {
 
@@ -27,6 +28,17 @@ struct Task {
     uint64_t                     deadline_ns     = 0;  // 0 = no deadline
     std::atomic<bool>            cancelled{false};
     std::atomic<bool>            completed{false};
+
+    // --- Continuation support ---
+    // `dependents` is written once during submit_after() setup (before the task
+    // is visible to any worker) and read once on completion. No lock needed —
+    // the happens-before from completed.store(release) and the dependent's
+    // pending_deps.fetch_sub(acq_rel) provides the necessary ordering.
+    std::vector<Task*>           dependents;
+
+    // Number of predecessors that haven't completed yet. The task is not
+    // runnable until this reaches 0.
+    std::atomic<int32_t>         pending_deps{0};
 
     // The scheduler stores a raw Task* in the lock-free queue (which requires
     // trivially copyable types). This self-reference keeps the Task alive
