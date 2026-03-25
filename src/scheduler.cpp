@@ -1,13 +1,16 @@
 #include <rais/scheduler.hpp>
+#include <rais/metal_executor.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <thread>
 
 namespace rais {
 
 Scheduler::Scheduler(SchedulerConfig config)
-    : global_queue_(config.global_queue_capacity) {
+    : global_queue_(config.global_queue_capacity)
+    , gpu_executor_(config.gpu_executor) {
 
     size_t n = config.num_workers;
     if (n == 0) {
@@ -49,6 +52,26 @@ TaskHandle Scheduler::submit(std::function<void()> fn, Lane lane) {
 
     while (!global_queue_.push(raw)) {
         // Global queue full — back off and retry.
+        std::this_thread::yield();
+    }
+
+    return TaskHandle(std::move(task));
+}
+
+TaskHandle Scheduler::submit_gpu(std::function<void(void*, void*)> gpu_fn) {
+    assert(gpu_executor_ && "submit_gpu requires a MetalExecutor in SchedulerConfig");
+
+    auto task = std::make_shared<Task>();
+    task->gpu_fn = std::move(gpu_fn);
+    task->lane = Lane::GPU;
+    task->enqueue_time_ns = clock_ns();
+
+    lane_counts_[static_cast<int>(Lane::GPU)].fetch_add(1, std::memory_order_relaxed);
+
+    Task* raw = task.get();
+    task->self_ref = task;
+
+    while (!global_queue_.push(raw)) {
         std::this_thread::yield();
     }
 
@@ -127,6 +150,36 @@ void Scheduler::worker_loop(size_t worker_id) {
                 std::memory_order_relaxed);
             task->completed.store(true, std::memory_order_release);
             task->self_ref.reset(); // break ref cycle
+            continue;
+        }
+
+        // GPU lane: dispatch to MetalExecutor instead of running on CPU
+        if (task->lane == Lane::GPU) {
+            if (gpu_executor_) {
+                // Capture raw pointer + prevent destruction via self_ref
+                std::shared_ptr<Task> ref = task->self_ref;
+                bool ok = gpu_executor_->submit(
+                    task->gpu_fn,
+                    [this, ref]() {
+                        // Called on Metal's completion thread
+                        lane_counts_[static_cast<int>(Lane::GPU)].fetch_sub(1,
+                            std::memory_order_relaxed);
+                        ref->completed.store(true, std::memory_order_release);
+                        ref->self_ref.reset();
+                    });
+                if (!ok) {
+                    // Backpressure — re-enqueue and let another worker retry later
+                    while (!global_queue_.push(task)) {
+                        std::this_thread::yield();
+                    }
+                }
+            } else {
+                // No GPU executor — mark completed immediately (nothing to run)
+                lane_counts_[static_cast<int>(Lane::GPU)].fetch_sub(1,
+                    std::memory_order_relaxed);
+                task->completed.store(true, std::memory_order_release);
+                task->self_ref.reset();
+            }
             continue;
         }
 

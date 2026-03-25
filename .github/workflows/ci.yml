@@ -7,37 +7,77 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
+  # ── Linux: CPU-only tests (no Metal) ──────────────────────────────────────
+  linux:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: ASan + UBSan
+            cmake_flags: "-fsanitize=address,undefined"
+            build_dir: build-asan
+          - name: TSan
+            cmake_flags: "-fsanitize=thread"
+            build_dir: build-tsan
+    name: "Linux (${{ matrix.name }})"
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake catch2 libcatch2-dev
 
-      - name: Configure (Debug + ASan + UBSan)
-        run: cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"
+      - name: Configure
+        run: cmake -B ${{ matrix.build_dir }} -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="${{ matrix.cmake_flags }}"
 
-      - name: Build (ASan + UBSan)
-        run: cmake --build build-asan
+      - name: Build
+        run: cmake --build ${{ matrix.build_dir }}
 
-      - name: Test (ASan + UBSan)
-        run: cd build-asan && ctest --output-on-failure
+      - name: Test
+        run: cd ${{ matrix.build_dir }} && ctest --output-on-failure
 
-      - name: Configure (Debug + TSan)
-        run: cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=thread"
+  # ── macOS: full suite including Metal ─────────────────────────────────────
+  macos:
+    runs-on: macos-14  # M1-based runner — has Metal GPU
+    strategy:
+      matrix:
+        include:
+          - name: Debug
+            build_type: Debug
+            cmake_flags: ""
+            build_dir: build-debug
+          - name: ASan + UBSan
+            build_type: Debug
+            cmake_flags: "-fsanitize=address,undefined"
+            build_dir: build-asan
+          - name: Release
+            build_type: Release
+            cmake_flags: ""
+            build_dir: build-release
+    name: "macOS (${{ matrix.name }})"
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Build (TSan)
-        run: cmake --build build-tsan
+      - name: Install Catch2
+        run: brew install catch2
 
-      - name: Test (TSan)
-        run: cd build-tsan && ctest --output-on-failure
+      - name: Configure
+        run: >
+          cmake -B ${{ matrix.build_dir }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_FLAGS="${{ matrix.cmake_flags }}"
 
-      - name: Configure (Release)
-        run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build ${{ matrix.build_dir }}
 
-      - name: Build (Release)
-        run: cmake --build build-release
+      - name: Test (all including Metal)
+        run: cd ${{ matrix.build_dir }} && ctest --output-on-failure
 
       - name: Benchmarks
-        run: cd build-release && ./bench_queue
+        if: matrix.build_type == 'Release'
+        run: |
+          cd ${{ matrix.build_dir }}
+          ./bench_queue
+          ./bench_deque
+          ./bench_allocator
+          ./bench_scheduler
+          ./bench_metal

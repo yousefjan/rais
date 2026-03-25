@@ -15,11 +15,14 @@
 
 namespace rais {
 
+class MetalExecutor;
+
 enum class ShutdownPolicy { Drain, Cancel };
 
 struct SchedulerConfig {
     size_t num_workers          = 0; // 0 = hardware_concurrency() - 1
     size_t global_queue_capacity = 65536; // must be power of two
+    MetalExecutor* gpu_executor = nullptr; // optional — enables Lane::GPU dispatch
 };
 
 class Scheduler {
@@ -30,9 +33,12 @@ public:
     Scheduler(const Scheduler&) = delete;
     Scheduler& operator=(const Scheduler&) = delete;
 
-    /// Submit a task to the scheduler. Sets enqueue_time_ns and returns
-    /// a handle the caller can use to wait/cancel.
+    /// Submit a CPU task. Sets enqueue_time_ns and returns a handle.
     TaskHandle submit(std::function<void()> fn, Lane lane = Lane::Background);
+
+    /// Submit a GPU task. The encode function receives (cmd_buf, encoder)
+    /// from MetalExecutor. Requires gpu_executor in SchedulerConfig.
+    TaskHandle submit_gpu(std::function<void(void*, void*)> gpu_fn);
 
     /// Shut down the scheduler. Drain finishes all pending tasks;
     /// Cancel marks pending tasks as cancelled and stops immediately.
@@ -58,6 +64,7 @@ private:
 
     MPMCQueue<Task*> global_queue_;
     std::vector<std::unique_ptr<Worker>> workers_;
+    MetalExecutor* gpu_executor_ = nullptr;
 
     // Per-lane admission counters. Indexed by static_cast<int>(Lane).
     alignas(64) std::atomic<int32_t> lane_counts_[4] = {};

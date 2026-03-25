@@ -20,8 +20,8 @@ inline constexpr uint64_t kBulkPromotionNs       = 500'000'000ULL; // 500ms
 
 struct Task {
     std::function<void()>        fn;
-    std::function<void(void*)>   gpu_fn;         // non-null only for GPU lane;
-                                                  // argument is id<MTLCommandBuffer>
+    std::function<void(void*, void*)> gpu_fn;     // non-null only for GPU lane;
+                                                  // args: (cmd_buf, encoder) from MetalExecutor
     Lane                         lane            = Lane::Background;
     uint64_t                     enqueue_time_ns = 0;  // set by Scheduler::submit()
     uint64_t                     deadline_ns     = 0;  // 0 = no deadline
