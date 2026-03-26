@@ -17,7 +17,6 @@ cmake-build*/
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Compilation database
 compile_commands.json
@@ -31,3 +30,21 @@ compile_commands.json
 
 # Profiler trace output
 rais_trace.bin
+
+# Experiments — model weights and HuggingFace cache
+experiments/models/
+experiments/.hf_cache/
+
+# Experiments — generated results and plots (reproducible from scripts)
+experiments/*.tsv
+experiments/*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# macOS
+.DS_Store
+**/.DS_Store

@@ -121,3 +121,7 @@ target_link_libraries(bench_metal PRIVATE rais)
 target_compile_definitions(bench_metal PRIVATE
     RAIS_METALLIB_PATH="${METAL_LIB}")
 add_dependencies(bench_metal metal_shaders)
+
+# Experiments
+add_executable(bench_inference_llm experiments/bench_inference_llm.cpp)
+target_link_libraries(bench_inference_llm PRIVATE rais)
