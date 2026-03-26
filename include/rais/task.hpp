@@ -14,6 +14,7 @@ enum class Lane : uint8_t {
     Background  = 1, // CPU target: best-effort, yields to Interactive
     Bulk        = 2, // CPU target: only when Interactive + Background queues empty
     GPU         = 3, // dispatched to MetalExecutor, not CPU workers
+    IO          = 4, // dedicated IO threads for SSD reads, never competes with CPU/GPU
 };
 
 inline constexpr uint64_t kBackgroundPromotionNs = 100'000'000ULL; // 100ms

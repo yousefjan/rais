@@ -131,3 +131,11 @@ size_t MetalBufferPool::live_buffers() const {
 }
 
 } // namespace rais
+
+// C-linkage helper so pure C++ code (layer_streamer.cpp) can get the
+// CPU-visible pointer from an MTLBuffer without including Obj-C headers.
+extern "C" void* rais_mtl_buffer_contents(void* buffer) {
+    if (!buffer) return nullptr;
+    id<MTLBuffer> buf = (__bridge id<MTLBuffer>)buffer;
+    return buf.contents;
+}

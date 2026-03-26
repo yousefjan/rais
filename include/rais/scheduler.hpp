@@ -25,6 +25,13 @@ struct SchedulerConfig {
     size_t num_workers          = 0; // 0 = hardware_concurrency() - 1
     size_t global_queue_capacity = 65536; // must be power of two
     MetalExecutor* gpu_executor = nullptr; // optional — enables Lane::GPU dispatch
+
+    // Number of dedicated IO threads. These threads only service Lane::IO
+    // tasks and never steal from CPU worker deques. 2 is a reasonable default
+    // for saturating Apple Silicon SSD bandwidth (~5-7 GB/s) without excessive
+    // context switching.
+    size_t io_thread_count      = 2;
+    size_t io_queue_capacity    = 4096; // must be power of two
 };
 
 class Scheduler {
@@ -87,11 +94,14 @@ private:
     Task* pop_deadline_task();
     void activate_dependents(Task* task, WorkStealingDeque<Task*>& local_deque);
     void enqueue_task(Task* raw);
+    void io_worker_loop();
 
     static constexpr size_t kTaskSlabCapacity = 8192;
 
     MPMCQueue<Task*> global_queue_;
+    MPMCQueue<Task*> io_queue_;         // separate queue for Lane::IO tasks
     std::vector<std::unique_ptr<Worker>> workers_;
+    std::vector<std::thread> io_threads_; // dedicated IO threads
     MetalExecutor* gpu_executor_ = nullptr;
     SlabAllocator<Task, kTaskSlabCapacity> task_slab_;
 

@@ -13,6 +13,8 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 # Library target
 add_library(rais STATIC
     src/scheduler.cpp
+    src/streaming.cpp
+    src/layer_streamer.cpp
     src/metal_executor.mm
     src/metal_allocator.mm
     src/profiler.mm
@@ -67,6 +69,14 @@ add_test(NAME test_allocator COMMAND test_allocator)
 add_executable(test_continuations tests/test_continuations.cpp)
 target_link_libraries(test_continuations PRIVATE rais Catch2::Catch2WithMain)
 add_test(NAME test_continuations COMMAND test_continuations)
+
+add_executable(test_io_lane tests/test_io_lane.cpp)
+target_link_libraries(test_io_lane PRIVATE rais Catch2::Catch2WithMain)
+add_test(NAME test_io_lane COMMAND test_io_lane)
+
+add_executable(test_layer_streamer tests/test_layer_streamer.mm)
+target_link_libraries(test_layer_streamer PRIVATE rais Catch2::Catch2WithMain)
+add_test(NAME test_layer_streamer COMMAND test_layer_streamer)
 
 add_executable(test_metal_executor tests/test_metal_executor.mm)
 target_link_libraries(test_metal_executor PRIVATE rais Catch2::Catch2WithMain)

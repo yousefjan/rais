@@ -11,6 +11,7 @@ namespace rais {
 
 Scheduler::Scheduler(SchedulerConfig config)
     : global_queue_(config.global_queue_capacity)
+    , io_queue_(config.io_queue_capacity)
     , gpu_executor_(config.gpu_executor) {
 
     size_t n = config.num_workers;
@@ -29,6 +30,11 @@ Scheduler::Scheduler(SchedulerConfig config)
     }
     for (size_t i = 0; i < n; ++i) {
         workers_[i]->thread = std::thread([this, i]() { worker_loop(i); });
+    }
+
+    // Dedicated IO threads — only service io_queue_, never steal from workers
+    for (size_t i = 0; i < config.io_thread_count; ++i) {
+        io_threads_.emplace_back([this]() { io_worker_loop(); });
     }
 }
 
@@ -64,8 +70,10 @@ TaskHandle Scheduler::submit(std::function<void()> fn, Lane lane) {
     Task* raw = task.get();
     task->self_ref = task;
 
-    while (!global_queue_.push(raw)) {
-        // Global queue full — back off and retry.
+    // IO-lane tasks go to the dedicated io_queue_ so they are only serviced
+    // by IO threads and never compete with CPU compute work.
+    auto& queue = (lane == Lane::IO) ? io_queue_ : global_queue_;
+    while (!queue.push(raw)) {
         std::this_thread::yield();
     }
 
@@ -96,7 +104,8 @@ TaskHandle Scheduler::submit(std::function<void()> fn, Lane lane,
 }
 
 void Scheduler::enqueue_task(Task* raw) {
-    while (!global_queue_.push(raw)) {
+    auto& queue = (raw->lane == Lane::IO) ? io_queue_ : global_queue_;
+    while (!queue.push(raw)) {
         std::this_thread::yield();
     }
 }
@@ -213,6 +222,11 @@ void Scheduler::shutdown(ShutdownPolicy policy) {
     for (auto& w : workers_) {
         if (w->thread.joinable()) {
             w->thread.join();
+        }
+    }
+    for (auto& t : io_threads_) {
+        if (t.joinable()) {
+            t.join();
         }
     }
 }
@@ -393,6 +407,68 @@ void Scheduler::worker_loop(size_t worker_id) {
         task->completed.store(true, std::memory_order_release);
         activate_dependents(task, self.deque);
         task->self_ref.reset(); // break ref cycle
+    }
+}
+
+void Scheduler::io_worker_loop() {
+    uint32_t backoff_us = 0;
+    constexpr uint32_t kMaxBackoffUs = 1000;
+
+    // IO workers need a dummy deque for activate_dependents. We use the
+    // global queue path instead (enqueue_task) by creating a local deque
+    // that is only used for dependent activation within this thread.
+    WorkStealingDeque<Task*> local_deque;
+
+    for (;;) {
+        bool stopping = stop_flag_.load(std::memory_order_acquire);
+
+        Task* task = nullptr;
+        io_queue_.pop(task);
+
+        if (!task) {
+            if (stopping) break;
+            if (backoff_us == 0) {
+                std::this_thread::yield();
+                backoff_us = 1;
+            } else {
+                std::this_thread::sleep_for(std::chrono::microseconds(backoff_us));
+                backoff_us = std::min(backoff_us * 2, kMaxBackoffUs);
+            }
+            continue;
+        }
+
+        backoff_us = 0;
+
+        if (task->cancelled.load(std::memory_order_acquire)) {
+            lane_counts_[static_cast<int>(task->lane)].fetch_sub(1,
+                std::memory_order_relaxed);
+            task->completed.store(true, std::memory_order_release);
+            activate_dependents(task, local_deque);
+            task->self_ref.reset();
+            // Drain any dependents that were pushed to our local deque
+            // back into the appropriate global queue.
+            Task* dep = nullptr;
+            while ((dep = local_deque.pop()) != nullptr) {
+                enqueue_task(dep);
+            }
+            continue;
+        }
+
+        if (task->fn) {
+            task->fn();
+        }
+        lane_counts_[static_cast<int>(task->lane)].fetch_sub(1,
+            std::memory_order_relaxed);
+        task->completed.store(true, std::memory_order_release);
+        activate_dependents(task, local_deque);
+        task->self_ref.reset();
+
+        // Dependents activated by IO completion likely belong to other lanes
+        // (e.g. GPU compute after an SSD read). Push them to the global queue.
+        Task* dep = nullptr;
+        while ((dep = local_deque.pop()) != nullptr) {
+            enqueue_task(dep);
+        }
     }
 }
 
