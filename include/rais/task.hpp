@@ -31,10 +31,11 @@ struct Task {
     std::atomic<bool>            completed{false};
 
     // --- Continuation support ---
-    // `dependents` is written once during submit_after() setup (before the task
-    // is visible to any worker) and read once on completion. No lock needed —
-    // the happens-before from completed.store(release) and the dependent's
-    // pending_deps.fetch_sub(acq_rel) provides the necessary ordering.
+    // `dependents` is written by submit_after() (on any thread) and read on
+    // completion by activate_dependents() (on a worker thread). Both accesses
+    // are guarded by dependents_mu to avoid a data race: a predecessor may
+    // still be running when submit_after() registers a new dependent.
+    std::mutex                   dependents_mu;
     std::vector<Task*>           dependents;
 
     // Number of predecessors that haven't completed yet. The task is not
